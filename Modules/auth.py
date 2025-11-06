@@ -10,7 +10,7 @@ from typing import Optional
 # Database Configuration
 # ============================================================
 # users.db is stored at the root of your project (beside app.py)
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "users.db")
+DB_PATH = os.path.abspath("users.db")
 
 
 # ============================================================
