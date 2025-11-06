@@ -1,60 +1,76 @@
 import streamlit as st
+import pandas as pd  # احتياطي
 import sqlite3
 import bcrypt
 import datetime as dt
-import pandas as pd
 import os
 import requests
 from typing import Optional
 
 # ============================================================
-# =============  CONFIGURATION SECTION  ======================
+# CONFIGURATION
 # ============================================================
 
-# Google Drive file link (shared as Editor)
+# Google Drive file ID (من الرابط المرسل)
 DRIVE_FILE_ID = "1dJ3xPgzxINRMc4tGo1WVRdMAI9Lc_pJ6"
 DB_PATH = "users.db"
 
 # ============================================================
-# =============  GOOGLE DRIVE SYNC FUNCTIONS  ================
+# GOOGLE DRIVE SYNC (DOWNLOAD / UPLOAD)
 # ============================================================
 
 def download_users_db():
-    """Download users.db file from Google Drive."""
+    """Download users.db from Google Drive safely with token bypass."""
+    import re
     url = f"https://drive.google.com/uc?export=download&id={DRIVE_FILE_ID}"
+    session = requests.Session()
+    response = session.get(url, stream=True)
+    token = None
+
+    # Google أحياناً تطلب تأكيد تحميل
+    for key, value in response.cookies.items():
+        if key.startswith("download_warning"):
+            token = value
+            break
+
+    if token:
+        url = f"https://drive.google.com/uc?export=download&confirm={token}&id={DRIVE_FILE_ID}"
+        response = session.get(url, stream=True)
+
     try:
-        response = requests.get(url)
         response.raise_for_status()
         with open(DB_PATH, "wb") as f:
-            f.write(response.content)
-        print("✅ users.db downloaded from Google Drive.")
+            for chunk in response.iter_content(32768):
+                if chunk:
+                    f.write(chunk)
+        print("✅ users.db downloaded from Google Drive successfully.")
     except Exception as e:
         print(f"⚠️ Failed to download users.db: {e}")
 
 def upload_users_db():
-    """Upload updated users.db back to Google Drive."""
+    """Upload updated users.db back to Google Drive (shared editor link)."""
     try:
-        # Google Drive direct upload endpoint
         url = f"https://www.googleapis.com/upload/drive/v3/files/{DRIVE_FILE_ID}?uploadType=media"
         headers = {"Authorization": "Bearer anonymous", "Content-Type": "application/octet-stream"}
         with open(DB_PATH, "rb") as f:
             response = requests.patch(url, headers=headers, data=f)
         if response.status_code in [200, 204]:
-            print("✅ users.db successfully uploaded to Google Drive.")
+            print("✅ users.db uploaded successfully to Google Drive.")
         else:
             print(f"⚠️ Upload failed: {response.status_code} - {response.text}")
     except Exception as e:
         print(f"⚠️ Error uploading users.db: {e}")
 
 # ============================================================
-# =============  DATABASE INITIALIZATION  ====================
+# DATABASE MANAGEMENT
 # ============================================================
 
 def get_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 def init_auth_tables():
-    download_users_db()  # Always load latest copy first
+    """Ensure DB and tables exist, download if needed."""
+    download_users_db()
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
@@ -79,7 +95,7 @@ def init_auth_tables():
     conn.close()
 
 # ============================================================
-# =============  USER MANAGEMENT FUNCTIONS  ==================
+# AUTH UTILITIES
 # ============================================================
 
 def hash_password(plain: str) -> bytes:
@@ -95,8 +111,10 @@ def log_event(username: str, event: str, success: int, note: str = None):
     conn = get_conn()
     cur = conn.cursor()
     ts = dt.datetime.utcnow().isoformat()
-    cur.execute("INSERT INTO auth_log(username, event, success, note, ts) VALUES (?, ?, ?, ?, ?)",
-                (username, event, success, note, ts))
+    cur.execute(
+        "INSERT INTO auth_log(username, event, success, note, ts) VALUES (?, ?, ?, ?, ?)",
+        (username, event, success, note, ts)
+    )
     conn.commit()
     conn.close()
 
@@ -106,10 +124,12 @@ def add_user(username: str, plain_password: str, role: str = "user") -> bool:
     now = dt.datetime.utcnow().isoformat()
     try:
         ph = hash_password(plain_password)
-        cur.execute("INSERT INTO users(username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
-                    (username, ph, role, now))
+        cur.execute(
+            "INSERT INTO users(username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+            (username, ph, role, now)
+        )
         conn.commit()
-        upload_users_db()  # Upload updated file
+        upload_users_db()
         log_event(username, "create_user", 1, f"role={role}")
         return True
     except sqlite3.IntegrityError:
@@ -158,7 +178,7 @@ def get_logs(limit=200):
     return rows
 
 # ============================================================
-# =============  STREAMLIT LOGIN SYSTEM  =====================
+# STREAMLIT LOGIN SYSTEM
 # ============================================================
 
 def login_form():
@@ -209,7 +229,7 @@ def require_login():
         return False
 
 # ============================================================
-# =============  ADMIN PANEL (FOR ADMINS ONLY)  ==============
+# ADMIN PANEL
 # ============================================================
 
 def admin_panel():
@@ -224,9 +244,9 @@ def admin_panel():
         if new_user and new_pass:
             ok = add_user(new_user, new_pass, new_role)
             if ok:
-                st.success("User created successfully.")
+                st.success("✅ User created successfully.")
             else:
-                st.error("Username already exists.")
+                st.error("⚠️ Username already exists.")
         else:
             st.error("Please enter username and password.")
 
@@ -238,17 +258,17 @@ def admin_panel():
 
     if st.button("Reset Password"):
         if reset_password(r_user, r_pass):
-            st.success("Password reset successfully.")
+            st.success("✅ Password reset successfully.")
         else:
-            st.error("User not found.")
+            st.error("⚠️ User not found.")
 
     st.markdown("---")
     st.subheader("📋 Registered Users")
 
     users = list_users()
     if users:
-        for u, role, created in users:
-            st.write(f"- **{u}** — {role} — created: {created}")
+        df = pd.DataFrame(users, columns=["Username", "Role", "Created At"])
+        st.dataframe(df, use_container_width=True)
     else:
         st.info("No users found.")
 
@@ -257,8 +277,7 @@ def admin_panel():
 
     logs = get_logs(100)
     if logs:
-        for _id, username, event, success, note, ts in logs:
-            ok_text = "✅" if success else "❌"
-            st.write(f"{_id} | {ts} | {ok_text} | {username} | {event} | {note}")
+        df_logs = pd.DataFrame(logs, columns=["ID", "Username", "Event", "Success", "Note", "Timestamp"])
+        st.dataframe(df_logs, use_container_width=True)
     else:
         st.info("No logs recorded yet.")
