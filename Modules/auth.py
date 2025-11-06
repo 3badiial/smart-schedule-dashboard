@@ -132,7 +132,7 @@ def login_form():
             st.session_state["user"] = user["username"]
             st.session_state["role"] = user["role"]
             log_event(username, "login_attempt", 1, "success")
-            st.experimental_rerun()
+            st.rerun()
         else:
             log_event(username, "login_attempt", 0, "bad_password")
             st.sidebar.error("كلمة المرور خاطئة.")
@@ -145,7 +145,7 @@ def logout():
     for k in ["user", "role"]:
         if k in st.session_state:
             del st.session_state[k]
-    st.experimental_rerun()
+    st.rerun()
 
 def require_login():
     # initialize tables if not exist
@@ -214,5 +214,6 @@ def admin_panel():
             st.write(f"{_id} | {ts} | {ok_text} | {username} | {event} | {note}")
     else:
         st.info("لا سجلات حتى الآن.")
+
 
 
