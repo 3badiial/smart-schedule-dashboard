@@ -1,8 +1,9 @@
+import os
 import sqlite3
 import bcrypt
 import streamlit as st
+import pandas as pd  # ✅ add this line
 import datetime as dt
-import os
 from typing import Optional
 
 # ============================================================
