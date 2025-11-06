@@ -1,40 +1,72 @@
-import os
+import streamlit as st
 import sqlite3
 import bcrypt
-import streamlit as st
-import pandas as pd  # ✅ add this line
 import datetime as dt
+import pandas as pd
+import os
+import requests
 from typing import Optional
 
 # ============================================================
-# Database Configuration
+# =============  CONFIGURATION SECTION  ======================
 # ============================================================
-# users.db is stored at the root of your project (beside app.py)
-DB_PATH = os.path.abspath("users.db")
 
+# Google Drive file link (shared as Editor)
+DRIVE_FILE_ID = "1dJ3xPgzxINRMc4tGo1WVRdMAI9Lc_pJ6"
+DB_PATH = "users.db"
 
 # ============================================================
-# Database Setup and Utilities
+# =============  GOOGLE DRIVE SYNC FUNCTIONS  ================
 # ============================================================
+
+def download_users_db():
+    """Download users.db file from Google Drive."""
+    url = f"https://drive.google.com/uc?export=download&id={DRIVE_FILE_ID}"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        with open(DB_PATH, "wb") as f:
+            f.write(response.content)
+        print("✅ users.db downloaded from Google Drive.")
+    except Exception as e:
+        print(f"⚠️ Failed to download users.db: {e}")
+
+def upload_users_db():
+    """Upload updated users.db back to Google Drive."""
+    try:
+        # Google Drive direct upload endpoint
+        url = f"https://www.googleapis.com/upload/drive/v3/files/{DRIVE_FILE_ID}?uploadType=media"
+        headers = {"Authorization": "Bearer anonymous", "Content-Type": "application/octet-stream"}
+        with open(DB_PATH, "rb") as f:
+            response = requests.patch(url, headers=headers, data=f)
+        if response.status_code in [200, 204]:
+            print("✅ users.db successfully uploaded to Google Drive.")
+        else:
+            print(f"⚠️ Upload failed: {response.status_code} - {response.text}")
+    except Exception as e:
+        print(f"⚠️ Error uploading users.db: {e}")
+
+# ============================================================
+# =============  DATABASE INITIALIZATION  ====================
+# ============================================================
+
 def get_conn():
-    """Connect to the SQLite database."""
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
-
 def init_auth_tables():
-    """Create authentication tables if they don't exist."""
+    download_users_db()  # Always load latest copy first
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE IF NOT EXISTS users(
             username TEXT PRIMARY KEY,
-            password_hash BLOB NOT NULL,
+            password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'user',
             created_at TEXT NOT NULL
         )
     """)
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS auth_log (
+        CREATE TABLE IF NOT EXISTS auth_log(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT,
             event TEXT,
@@ -46,51 +78,38 @@ def init_auth_tables():
     conn.commit()
     conn.close()
 
+# ============================================================
+# =============  USER MANAGEMENT FUNCTIONS  ==================
+# ============================================================
+
+def hash_password(plain: str) -> bytes:
+    return bcrypt.hashpw(plain.encode('utf-8'), bcrypt.gensalt())
+
+def verify_password(plain: str, hashed: bytes) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode('utf-8'), hashed)
+    except:
+        return False
 
 def log_event(username: str, event: str, success: int, note: str = None):
-    """Record authentication-related events."""
     conn = get_conn()
     cur = conn.cursor()
     ts = dt.datetime.utcnow().isoformat()
-    cur.execute("""
-        INSERT INTO auth_log (username, event, success, note, ts)
-        VALUES (?, ?, ?, ?, ?)
-    """, (username, event, success, note, ts))
+    cur.execute("INSERT INTO auth_log(username, event, success, note, ts) VALUES (?, ?, ?, ?, ?)",
+                (username, event, success, note, ts))
     conn.commit()
     conn.close()
 
-
-# ============================================================
-# Password Hashing and Verification
-# ============================================================
-def hash_password(plain_password: str) -> bytes:
-    """Return a bcrypt hash for a plain password."""
-    return bcrypt.hashpw(plain_password.encode('utf-8'), bcrypt.gensalt())
-
-
-def verify_password(plain_password: str, hashed: bytes) -> bool:
-    """Verify a plain password against its hash."""
-    try:
-        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed)
-    except Exception:
-        return False
-
-
-# ============================================================
-# User Management
-# ============================================================
 def add_user(username: str, plain_password: str, role: str = "user") -> bool:
-    """Add a new user to the database."""
     conn = get_conn()
     cur = conn.cursor()
     now = dt.datetime.utcnow().isoformat()
     try:
-        pw_hash = hash_password(plain_password)
-        cur.execute(
-            "INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
-            (username, pw_hash, role, now),
-        )
+        ph = hash_password(plain_password)
+        cur.execute("INSERT INTO users(username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                    (username, ph, role, now))
         conn.commit()
+        upload_users_db()  # Upload updated file
         log_event(username, "create_user", 1, f"role={role}")
         return True
     except sqlite3.IntegrityError:
@@ -99,22 +118,20 @@ def add_user(username: str, plain_password: str, role: str = "user") -> bool:
     finally:
         conn.close()
 
-
 def reset_password(username: str, new_password: str) -> bool:
-    """Reset a user's password."""
     conn = get_conn()
     cur = conn.cursor()
-    pw_hash = hash_password(new_password)
-    cur.execute("UPDATE users SET password_hash = ? WHERE username = ?", (pw_hash, username))
+    ph = hash_password(new_password)
+    cur.execute("UPDATE users SET password_hash = ? WHERE username = ?", (ph, username))
     conn.commit()
     updated = cur.rowcount > 0
-    log_event(username, "reset_password", 1 if updated else 0)
     conn.close()
+    if updated:
+        upload_users_db()
+    log_event(username, "reset_password", 1 if updated else 0, None)
     return updated
 
-
 def get_user(username: str) -> Optional[dict]:
-    """Retrieve user info by username."""
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT username, password_hash, role, created_at FROM users WHERE username = ?", (username,))
@@ -124,9 +141,7 @@ def get_user(username: str) -> Optional[dict]:
         return None
     return {"username": row[0], "password_hash": row[1], "role": row[2], "created_at": row[3]}
 
-
 def list_users():
-    """List all users."""
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT username, role, created_at FROM users ORDER BY username")
@@ -134,9 +149,7 @@ def list_users():
     conn.close()
     return rows
 
-
 def get_logs(limit=200):
-    """Return the most recent authentication logs."""
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT id, username, event, success, note, ts FROM auth_log ORDER BY id DESC LIMIT ?", (limit,))
@@ -144,137 +157,108 @@ def get_logs(limit=200):
     conn.close()
     return rows
 
+# ============================================================
+# =============  STREAMLIT LOGIN SYSTEM  =====================
+# ============================================================
 
-# ============================================================
-# Streamlit Authentication Flow
-# ============================================================
 def login_form():
-    """Render the Streamlit login form."""
     st.sidebar.subheader("🔐 Login")
-
     username = st.sidebar.text_input("Username", key="auth_username")
     password = st.sidebar.text_input("Password", type="password", key="auth_password")
 
-    if st.sidebar.button("Sign In"):
+    if st.sidebar.button("Login"):
         user = get_user(username)
         if not user:
-            st.sidebar.error("User does not exist.")
             log_event(username, "login_attempt", 0, "no_user")
+            st.sidebar.error("User not found.")
             return None
 
-        stored_pw = user["password_hash"]
-        if isinstance(stored_pw, str):
-            stored_pw = stored_pw.encode("latin1")
+        stored = user["password_hash"]
+        if isinstance(stored, str):
+            stored = stored.encode('latin1')
 
-        if verify_password(password, stored_pw):
+        ok = verify_password(password, stored)
+        if ok:
             st.session_state["user"] = user["username"]
             st.session_state["role"] = user["role"]
             log_event(username, "login_attempt", 1, "success")
             st.rerun()
         else:
+            log_event(username, "login_attempt", 0, "wrong_password")
             st.sidebar.error("Incorrect password.")
-            log_event(username, "login_attempt", 0, "bad_password")
             return None
 
-
 def logout():
-    """Log out the current user."""
     if "user" in st.session_state:
-        log_event(st.session_state.get("user"), "logout", 1)
-    for key in ["user", "role"]:
-        if key in st.session_state:
-            del st.session_state[key]
+        log_event(st.session_state.get("user"), "logout", 1, None)
+    for k in ["user", "role"]:
+        if k in st.session_state:
+            del st.session_state[k]
     st.rerun()
 
-
-def require_login() -> bool:
-    """Ensure that a user is logged in; otherwise, show login form."""
+def require_login():
     init_auth_tables()
-
     if st.session_state.get("user"):
-        st.sidebar.markdown(f"**Logged in as:** {st.session_state['user']} ({st.session_state.get('role', 'user')})")
+        st.sidebar.markdown(f"**Logged in as:** {st.session_state['user']} ({st.session_state.get('role','user')})")
         if st.sidebar.button("Logout"):
             logout()
         return True
     else:
         login_form()
-        st.sidebar.info("Please log in to access the app.")
+        st.sidebar.info("Please log in to access the dashboard.")
         return False
 
+# ============================================================
+# =============  ADMIN PANEL (FOR ADMINS ONLY)  ==============
+# ============================================================
 
-# ============================================================
-# Admin Panel (for managing users)
-# ============================================================
 def admin_panel():
-    """Admin-only panel for managing users and viewing logs."""
     st.header("🛡️ Admin Panel")
-
-    # ============================================================
-    # CREATE NEW USER
-    # ============================================================
     st.subheader("➕ Create New User")
 
-    # Form prevents rerun when typing inside input fields
-    with st.form("create_user_form"):
-        new_user = st.text_input("New Username")
-        new_pass = st.text_input("New Password", type="password")
-        new_role = st.selectbox("Role", ["user", "admin"])
-        submitted = st.form_submit_button("Create User")
+    new_user = st.text_input("New Username", key="admin_new_user")
+    new_pass = st.text_input("New Password", type="password", key="admin_new_pass")
+    new_role = st.selectbox("Role", ["user", "admin"], key="admin_new_role")
 
-        if submitted:
-            if new_user and new_pass:
-                if add_user(new_user, new_pass, new_role):
-                    st.success(f"✅ User '{new_user}' created successfully.")
-                else:
-                    st.error("⚠️ Username already exists.")
+    if st.button("Create User"):
+        if new_user and new_pass:
+            ok = add_user(new_user, new_pass, new_role)
+            if ok:
+                st.success("User created successfully.")
             else:
-                st.warning("Please enter both username and password.")
+                st.error("Username already exists.")
+        else:
+            st.error("Please enter username and password.")
 
-    # ============================================================
-    # RESET PASSWORD
-    # ============================================================
     st.markdown("---")
-    st.subheader("🔁 Reset User Password")
+    st.subheader("🔁 Reset Password")
 
-    with st.form("reset_password_form"):
-        r_user = st.text_input("Username to Reset")
-        r_pass = st.text_input("New Password", type="password")
-        reset = st.form_submit_button("Reset Password")
+    r_user = st.text_input("Username to Reset", key="admin_reset_user")
+    r_pass = st.text_input("New Password", type="password", key="admin_reset_pass")
 
-        if reset:
-            if r_user and r_pass:
-                if reset_password(r_user, r_pass):
-                    st.success(f"✅ Password for '{r_user}' has been reset.")
-                else:
-                    st.error("⚠️ Username not found.")
-            else:
-                st.warning("Please fill in both fields.")
+    if st.button("Reset Password"):
+        if reset_password(r_user, r_pass):
+            st.success("Password reset successfully.")
+        else:
+            st.error("User not found.")
 
-    # ============================================================
-    # LIST USERS
-    # ============================================================
     st.markdown("---")
     st.subheader("📋 Registered Users")
 
     users = list_users()
     if users:
-        df_users = pd.DataFrame(users, columns=["Username", "Role", "Created At"])
-        st.dataframe(df_users, use_container_width=True)
+        for u, role, created in users:
+            st.write(f"- **{u}** — {role} — created: {created}")
     else:
-        st.info("No users registered yet.")
+        st.info("No users found.")
 
-    # ============================================================
-    # VIEW AUTHENTICATION LOG
-    # ============================================================
     st.markdown("---")
-    st.subheader("🪵 Authentication Log")
+    st.subheader("📝 Login Activity Log")
 
     logs = get_logs(100)
     if logs:
-        df_logs = pd.DataFrame(
-            logs, columns=["ID", "Username", "Event", "Success", "Note", "Timestamp"]
-        )
-        df_logs["Success"] = df_logs["Success"].map({1: "✅", 0: "❌"})
-        st.dataframe(df_logs, use_container_width=True)
+        for _id, username, event, success, note, ts in logs:
+            ok_text = "✅" if success else "❌"
+            st.write(f"{_id} | {ts} | {ok_text} | {username} | {event} | {note}")
     else:
-        st.info("No login logs available yet.")
+        st.info("No logs recorded yet.")
