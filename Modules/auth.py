@@ -7,7 +7,8 @@ import os
 from typing import Optional
 
 # Path to the same DB you already use (تأكد من أنه نفس DB_PATH في التطبيق الرئيسي)
-DB_PATH = "users.db"
+
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "users.db")
 
 # ---------------- DB Init ----------------
 def get_conn():
@@ -213,4 +214,5 @@ def admin_panel():
             st.write(f"{_id} | {ts} | {ok_text} | {username} | {event} | {note}")
     else:
         st.info("لا سجلات حتى الآن.")
+
 
