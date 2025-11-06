@@ -208,49 +208,72 @@ def admin_panel():
     """Admin-only panel for managing users and viewing logs."""
     st.header("🛡️ Admin Panel")
 
+    # ============================================================
+    # CREATE NEW USER
+    # ============================================================
     st.subheader("➕ Create New User")
-    new_user = st.text_input("New Username", key="admin_new_user")
-    new_pass = st.text_input("New Password", type="password", key="admin_new_pass")
-    new_role = st.selectbox("Role", ["user", "admin"], key="admin_new_role")
 
-    if st.button("Create User"):
-        if new_user and new_pass:
-            if add_user(new_user, new_pass, new_role):
-                st.success("User created successfully.")
+    # Form prevents rerun when typing inside input fields
+    with st.form("create_user_form"):
+        new_user = st.text_input("New Username")
+        new_pass = st.text_input("New Password", type="password")
+        new_role = st.selectbox("Role", ["user", "admin"])
+        submitted = st.form_submit_button("Create User")
+
+        if submitted:
+            if new_user and new_pass:
+                if add_user(new_user, new_pass, new_role):
+                    st.success(f"✅ User '{new_user}' created successfully.")
+                else:
+                    st.error("⚠️ Username already exists.")
             else:
-                st.error("Username already exists.")
-        else:
-            st.warning("Please enter both username and password.")
+                st.warning("Please enter both username and password.")
 
+    # ============================================================
+    # RESET PASSWORD
+    # ============================================================
     st.markdown("---")
-
     st.subheader("🔁 Reset User Password")
-    r_user = st.text_input("Username to Reset", key="admin_reset_user")
-    r_pass = st.text_input("New Password", type="password", key="admin_reset_pass")
 
-    if st.button("Reset Password"):
-        if reset_password(r_user, r_pass):
-            st.success("Password reset successfully.")
-        else:
-            st.error("Username not found.")
+    with st.form("reset_password_form"):
+        r_user = st.text_input("Username to Reset")
+        r_pass = st.text_input("New Password", type="password")
+        reset = st.form_submit_button("Reset Password")
 
+        if reset:
+            if r_user and r_pass:
+                if reset_password(r_user, r_pass):
+                    st.success(f"✅ Password for '{r_user}' has been reset.")
+                else:
+                    st.error("⚠️ Username not found.")
+            else:
+                st.warning("Please fill in both fields.")
+
+    # ============================================================
+    # LIST USERS
+    # ============================================================
     st.markdown("---")
-
     st.subheader("📋 Registered Users")
+
     users = list_users()
     if users:
-        for u, role, created in users:
-            st.write(f"- **{u}** — Role: {role} — Created: {created}")
+        df_users = pd.DataFrame(users, columns=["Username", "Role", "Created At"])
+        st.dataframe(df_users, use_container_width=True)
     else:
         st.info("No users registered yet.")
 
+    # ============================================================
+    # VIEW AUTHENTICATION LOG
+    # ============================================================
     st.markdown("---")
-
     st.subheader("🪵 Authentication Log")
+
     logs = get_logs(100)
     if logs:
-        for _id, username, event, success, note, ts in logs:
-            emoji = "✅" if success else "❌"
-            st.write(f"{_id}. {emoji} **{username}** | {event} | {note or ''} | {ts}")
+        df_logs = pd.DataFrame(
+            logs, columns=["ID", "Username", "Event", "Success", "Note", "Timestamp"]
+        )
+        df_logs["Success"] = df_logs["Success"].map({1: "✅", 0: "❌"})
+        st.dataframe(df_logs, use_container_width=True)
     else:
-        st.info("No logs available yet.")
+        st.info("No login logs available yet.")
