@@ -1,76 +1,26 @@
 import streamlit as st
-import pandas as pd  # احتياطي
+import pandas as pd
 import sqlite3
 import bcrypt
 import datetime as dt
 import os
-import requests
 from typing import Optional
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-# Google Drive file ID (من الرابط المرسل)
-DRIVE_FILE_ID = "1dJ3xPgzxINRMc4tGo1WVRdMAI9Lc_pJ6"
-DB_PATH = "users.db"
+DB_PATH = os.path.abspath("users.db")
 
 # ============================================================
-# GOOGLE DRIVE SYNC (DOWNLOAD / UPLOAD)
-# ============================================================
-
-def download_users_db():
-    """Download users.db from Google Drive safely with token bypass."""
-    import re
-    url = f"https://drive.google.com/uc?export=download&id={DRIVE_FILE_ID}"
-    session = requests.Session()
-    response = session.get(url, stream=True)
-    token = None
-
-    # Google أحياناً تطلب تأكيد تحميل
-    for key, value in response.cookies.items():
-        if key.startswith("download_warning"):
-            token = value
-            break
-
-    if token:
-        url = f"https://drive.google.com/uc?export=download&confirm={token}&id={DRIVE_FILE_ID}"
-        response = session.get(url, stream=True)
-
-    try:
-        response.raise_for_status()
-        with open(DB_PATH, "wb") as f:
-            for chunk in response.iter_content(32768):
-                if chunk:
-                    f.write(chunk)
-        print("✅ users.db downloaded from Google Drive successfully.")
-    except Exception as e:
-        print(f"⚠️ Failed to download users.db: {e}")
-
-def upload_users_db():
-    """Upload updated users.db back to Google Drive (shared editor link)."""
-    try:
-        url = f"https://www.googleapis.com/upload/drive/v3/files/{DRIVE_FILE_ID}?uploadType=media"
-        headers = {"Authorization": "Bearer anonymous", "Content-Type": "application/octet-stream"}
-        with open(DB_PATH, "rb") as f:
-            response = requests.patch(url, headers=headers, data=f)
-        if response.status_code in [200, 204]:
-            print("✅ users.db uploaded successfully to Google Drive.")
-        else:
-            print(f"⚠️ Upload failed: {response.status_code} - {response.text}")
-    except Exception as e:
-        print(f"⚠️ Error uploading users.db: {e}")
-
-# ============================================================
-# DATABASE MANAGEMENT
+# DATABASE
 # ============================================================
 
 def get_conn():
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
 def init_auth_tables():
-    """Ensure DB and tables exist, download if needed."""
-    download_users_db()
+    """Ensure DB and tables exist."""
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
@@ -93,9 +43,10 @@ def init_auth_tables():
     """)
     conn.commit()
     conn.close()
+    seed_default_users()
 
 # ============================================================
-# AUTH UTILITIES
+# AUTHENTICATION HELPERS
 # ============================================================
 
 def hash_password(plain: str) -> bytes:
@@ -111,10 +62,8 @@ def log_event(username: str, event: str, success: int, note: str = None):
     conn = get_conn()
     cur = conn.cursor()
     ts = dt.datetime.utcnow().isoformat()
-    cur.execute(
-        "INSERT INTO auth_log(username, event, success, note, ts) VALUES (?, ?, ?, ?, ?)",
-        (username, event, success, note, ts)
-    )
+    cur.execute("INSERT INTO auth_log(username, event, success, note, ts) VALUES (?, ?, ?, ?, ?)",
+                (username, event, success, note, ts))
     conn.commit()
     conn.close()
 
@@ -124,12 +73,9 @@ def add_user(username: str, plain_password: str, role: str = "user") -> bool:
     now = dt.datetime.utcnow().isoformat()
     try:
         ph = hash_password(plain_password)
-        cur.execute(
-            "INSERT INTO users(username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
-            (username, ph, role, now)
-        )
+        cur.execute("INSERT INTO users(username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
+                    (username, ph, role, now))
         conn.commit()
-        upload_users_db()
         log_event(username, "create_user", 1, f"role={role}")
         return True
     except sqlite3.IntegrityError:
@@ -146,8 +92,6 @@ def reset_password(username: str, new_password: str) -> bool:
     conn.commit()
     updated = cur.rowcount > 0
     conn.close()
-    if updated:
-        upload_users_db()
     log_event(username, "reset_password", 1 if updated else 0, None)
     return updated
 
@@ -178,7 +122,29 @@ def get_logs(limit=200):
     return rows
 
 # ============================================================
-# STREAMLIT LOGIN SYSTEM
+# DEFAULT USERS (ADDED AUTOMATICALLY)
+# ============================================================
+
+def seed_default_users():
+    """Create default admin and test accounts if DB empty."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM users")
+    count = cur.fetchone()[0]
+    conn.close()
+
+    if count == 0:
+        defaults = [
+            ("Admin", "123456", "admin"),
+            ("Test", "12345", "user"),
+            ("Basel", "1122", "user")
+        ]
+        for u, p, r in defaults:
+            add_user(u, p, r)
+        print("✅ Default users created successfully.")
+
+# ============================================================
+# STREAMLIT LOGIN LOGIC
 # ============================================================
 
 def login_form():
