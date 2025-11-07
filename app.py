@@ -15,7 +15,7 @@ st.set_page_config(
 
 # ===== الاستيرادات =====
 from utils import load_schedules, load_employee_info
-from Modules import auth, overview, compare, monthly, viewer, events, weekends, coworking
+from Modules import overview, compare, monthly, viewer, events, weekends, coworking
 
 
 # ===== تحميل البيانات =====
@@ -87,4 +87,5 @@ st.markdown("""
     </p>
 </div>
 """, unsafe_allow_html=True)
+
 
