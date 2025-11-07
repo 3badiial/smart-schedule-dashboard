@@ -5,7 +5,9 @@
 
 import streamlit as st
 
-st.markdown(open("adif_theme.css").read(), unsafe_allow_html=True)
+#for theme
+with open("adif_theme.css") as f:
+    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 # 👇 أول دالة Streamlit لازم تكون أول شيء
 st.set_page_config(
@@ -89,6 +91,7 @@ st.markdown("""
     </p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
