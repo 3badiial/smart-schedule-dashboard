@@ -17,10 +17,6 @@ st.set_page_config(
 from utils import load_schedules, load_employee_info
 from Modules import auth, overview, compare, monthly, viewer, events, weekends, coworking
 
-# ===== التحقق من المستخدم =====
-auth.init_auth_tables()
-if not auth.require_login():
-    st.stop()
 
 # ===== تحميل البيانات =====
 df = load_schedules()
@@ -91,3 +87,4 @@ st.markdown("""
     </p>
 </div>
 """, unsafe_allow_html=True)
+
