@@ -5,6 +5,8 @@
 
 import streamlit as st
 
+st.markdown(open("adif_theme.css").read(), unsafe_allow_html=True)
+
 # 👇 أول دالة Streamlit لازم تكون أول شيء
 st.set_page_config(
     page_title="Smart Schedule Dashboard",
@@ -87,5 +89,6 @@ st.markdown("""
     </p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
